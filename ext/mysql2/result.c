@@ -470,6 +470,51 @@ static void rb_mysql_row_query_options(VALUE opts, ID *db_timezone, ID *app_time
   }
 }
 
+static VALUE rb_mysql_result_element(VALUE self, VALUE seek) {
+  VALUE row, opts;
+  ID db_timezone, app_timezone;
+  long offset;
+  int symbolizeKeys = 0, asArray = 0, castBool = 0, cacheRows = 1, cast = 1, streaming = 0;
+  mysql2_result_wrapper * wrapper;
+
+  GetMysql2Result(self, wrapper);
+
+  offset = NUM2LONG(seek);
+
+  if (!wrapper->numberOfRows) {
+    wrapper->numberOfRows = mysql_num_rows(wrapper->result);
+  }
+
+  opts = rb_iv_get(self, "@query_options");
+  rb_mysql_row_query_options(opts, &db_timezone, &app_timezone, &symbolizeKeys, &asArray, &castBool, &cast, &streaming, &cacheRows);
+
+  if (streaming) {
+    rb_raise(cMysql2Error, "Element reference operator #[] cannot be used in streaming mode.");
+  }
+
+  /* count back from the end if passed a negative number */
+  if (offset < 0) {
+    offset = wrapper->numberOfRows + offset;
+  }
+
+  /* negative offset was too big */
+  if (offset < 0) {
+    return Qnil;
+    /* rb_raise(cMysql2Error, "Out of range: offset %ld is beyond %lu rows (offset begins at 0).", offset, wrapper->numberOfRows); */
+  }
+
+  if (wrapper->numberOfRows <= (unsigned long)offset) {
+    return Qnil;
+    /* rb_raise(cMysql2Error, "Out of range: offset %ld is beyond %lu rows (offset begins at 0).", offset, wrapper->numberOfRows); */
+  }
+
+  mysql_data_seek(wrapper->result, offset);
+
+  row = rb_mysql_result_fetch_row(self, db_timezone, app_timezone, symbolizeKeys, asArray, castBool, cast);
+
+  return row;
+}
+
 static VALUE rb_mysql_result_each(int argc, VALUE * argv, VALUE self) {
   VALUE defaults, opts, block;
   ID db_timezone, app_timezone;
@@ -613,6 +658,7 @@ void init_mysql2_result() {
   cDateTime = rb_const_get(rb_cObject, rb_intern("DateTime"));
 
   cMysql2Result = rb_define_class_under(mMysql2, "Result", rb_cObject);
+  rb_define_method(cMysql2Result, "[]", rb_mysql_result_element, 1);
   rb_define_method(cMysql2Result, "each", rb_mysql_result_each, -1);
   rb_define_method(cMysql2Result, "fields", rb_mysql_result_fetch_fields, 0);
   rb_define_method(cMysql2Result, "count", rb_mysql_result_count, 0);
