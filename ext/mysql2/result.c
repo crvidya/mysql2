@@ -181,10 +181,11 @@ static VALUE mysql2_set_field_string_encoding(VALUE val, MYSQL_FIELD field, rb_e
 #endif
 
 
-static VALUE rb_mysql_result_fetch_row(VALUE self, ID db_timezone, ID app_timezone, int symbolizeKeys, int asArray, int castBool, int cast, MYSQL_FIELD * fields) {
+static VALUE rb_mysql_result_fetch_row(VALUE self, ID db_timezone, ID app_timezone, int symbolizeKeys, int asArray, int castBool, int cast) {
   VALUE rowVal;
   mysql2_result_wrapper * wrapper;
   MYSQL_ROW row;
+  MYSQL_FIELD * fields;
   unsigned int i = 0;
   unsigned long * fieldLengths;
   void * ptr;
@@ -215,6 +216,9 @@ static VALUE rb_mysql_result_fetch_row(VALUE self, ID db_timezone, ID app_timezo
     wrapper->numberOfFields = mysql_num_fields(wrapper->result);
     wrapper->fields = rb_ary_new2(wrapper->numberOfFields);
   }
+
+  /* get the MySQL field types to convert to Ruby field types */
+  fields = mysql_fetch_fields(wrapper->result);
 
   for (i = 0; i < wrapper->numberOfFields; i++) {
     VALUE field = rb_mysql_result_fetch_field(self, i, symbolizeKeys);
@@ -500,10 +504,8 @@ static VALUE rb_mysql_result_each(int argc, VALUE * argv, VALUE self) {
     if(!wrapper->streamingComplete) {
       VALUE row;
 
-      fields = mysql_fetch_fields(wrapper->result);
-
       do {
-        row = rb_mysql_result_fetch_row(self, db_timezone, app_timezone, symbolizeKeys, asArray, castBool, cast, fields);
+        row = rb_mysql_result_fetch_row(self, db_timezone, app_timezone, symbolizeKeys, asArray, castBool, cast);
 
         if (block != Qnil && row != Qnil) {
           rb_yield(row);
@@ -528,14 +530,13 @@ static VALUE rb_mysql_result_each(int argc, VALUE * argv, VALUE self) {
     } else {
       unsigned long rowsProcessed = 0;
       rowsProcessed = RARRAY_LEN(wrapper->rows);
-      fields = mysql_fetch_fields(wrapper->result);
 
       for (i = 0; i < wrapper->numberOfRows; i++) {
         VALUE row;
         if (cacheRows && i < rowsProcessed) {
           row = rb_ary_entry(wrapper->rows, i);
         } else {
-          row = rb_mysql_result_fetch_row(self, db_timezone, app_timezone, symbolizeKeys, asArray, castBool, cast, fields);
+          row = rb_mysql_result_fetch_row(self, db_timezone, app_timezone, symbolizeKeys, asArray, castBool, cast);
           if (cacheRows) {
             rb_ary_store(wrapper->rows, i, row);
           }
