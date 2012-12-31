@@ -470,49 +470,81 @@ static void rb_mysql_row_query_options(VALUE opts, ID *db_timezone, ID *app_time
   }
 }
 
-static VALUE rb_mysql_result_element(VALUE self, VALUE seek) {
-  VALUE row, opts;
+static VALUE rb_mysql_result_element(int argc, VALUE * argv, VALUE self) {
+  VALUE seek, count, defaults, opts;
+  VALUE row, rows;
   ID db_timezone, app_timezone;
-  long offset;
+  long i, c_seek, c_count = 0;
   int symbolizeKeys = 0, asArray = 0, castBool = 0, cacheRows = 1, cast = 1, streaming = 0;
   mysql2_result_wrapper * wrapper;
 
   GetMysql2Result(self, wrapper);
 
-  offset = NUM2LONG(seek);
-
-  if (!wrapper->numberOfRows) {
-    wrapper->numberOfRows = mysql_num_rows(wrapper->result);
+  rb_scan_args(argc, argv, "12", &seek, &count, &opts);
+  /* If the second arg is a hash, it's the opts and there's no count */
+  if (TYPE(count) == T_HASH) {
+    opts = count;
+    count = Qnil;
   }
 
-  opts = rb_iv_get(self, "@query_options");
+  c_seek = NUM2LONG(seek);
+  if (!NIL_P(count)) {
+    c_count = NUM2LONG(count);
+    /* Special case: ary[x, 0] returns []*/
+    if (!c_count) return rb_ary_new();
+  }
+
+  defaults = rb_iv_get(self, "@query_options");
+  if (!NIL_P(opts)) {
+    opts = rb_funcall(defaults, intern_merge, 1, opts);
+  } else {
+    opts = defaults;
+  }
   rb_mysql_row_query_options(opts, &db_timezone, &app_timezone, &symbolizeKeys, &asArray, &castBool, &cast, &streaming, &cacheRows);
 
   if (streaming) {
     rb_raise(cMysql2Error, "Element reference operator #[] cannot be used in streaming mode.");
   }
 
+  if (!wrapper->numberOfRows) {
+    wrapper->numberOfRows = mysql_num_rows(wrapper->result);
+  }
+
   /* count back from the end if passed a negative number */
-  if (offset < 0) {
-    offset = wrapper->numberOfRows + offset;
+  if (c_seek < 0) {
+    c_seek = wrapper->numberOfRows + c_seek;
   }
 
   /* negative offset was too big */
-  if (offset < 0) {
+  if (c_seek < 0) {
     return Qnil;
-    /* rb_raise(cMysql2Error, "Out of range: offset %ld is beyond %lu rows (offset begins at 0).", offset, wrapper->numberOfRows); */
+    /* rb_raise(cMysql2Error, "Out of range: offset %ld is beyond %lu rows (offset begins at 0).", c_seek, wrapper->numberOfRows); */
   }
 
-  if (wrapper->numberOfRows <= (unsigned long)offset) {
-    return Qnil;
-    /* rb_raise(cMysql2Error, "Out of range: offset %ld is beyond %lu rows (offset begins at 0).", offset, wrapper->numberOfRows); */
+  if (wrapper->numberOfRows <= (unsigned long)c_seek) {
+    if (!c_count) return Qnil;
+    else return rb_ary_new();
+    /* rb_raise(cMysql2Error, "Out of range: offset %ld is beyond %lu rows (offset begins at 0).", c_seek, wrapper->numberOfRows); */
   }
 
-  mysql_data_seek(wrapper->result, offset);
+  mysql_data_seek(wrapper->result, c_seek);
 
-  row = rb_mysql_result_fetch_row(self, db_timezone, app_timezone, symbolizeKeys, asArray, castBool, cast);
+  if (!c_count) {
+    return rb_mysql_result_fetch_row(self, db_timezone, app_timezone, symbolizeKeys, asArray, castBool, cast);
+  }
 
-  return row;
+  /* given ary = [1, 2, 3] then ary[1, 100] returns [2, 3] */
+  if ((unsigned long)(c_seek + c_count) > wrapper->numberOfRows) {
+    c_count = wrapper->numberOfRows - c_seek;
+  }
+
+  /* return an array! */
+  rows = rb_ary_new2(c_count);
+  for (i = 0; i < c_count; i++) {
+    row = rb_mysql_result_fetch_row(self, db_timezone, app_timezone, symbolizeKeys, asArray, castBool, cast);
+    rb_ary_store(rows, i, row);
+  }
+  return rows;
 }
 
 static VALUE rb_mysql_result_each(int argc, VALUE * argv, VALUE self) {
@@ -658,7 +690,7 @@ void init_mysql2_result() {
   cDateTime = rb_const_get(rb_cObject, rb_intern("DateTime"));
 
   cMysql2Result = rb_define_class_under(mMysql2, "Result", rb_cObject);
-  rb_define_method(cMysql2Result, "[]", rb_mysql_result_element, 1);
+  rb_define_method(cMysql2Result, "[]", rb_mysql_result_element, -1);
   rb_define_method(cMysql2Result, "each", rb_mysql_result_each, -1);
   rb_define_method(cMysql2Result, "fields", rb_mysql_result_fetch_fields, 0);
   rb_define_method(cMysql2Result, "count", rb_mysql_result_count, 0);
